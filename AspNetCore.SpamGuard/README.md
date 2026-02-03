@@ -148,10 +148,24 @@ All configuration is done through `SpamGuardOptions`:
 ```json
 {
   "SpamGuard": {
-    "RecaptchaSecretKey": "your-secret-key-here",
+    "RecaptchaSecretKey": "",
     "RecaptchaMinScore": 0.5,
+    "RequireRecaptcha": true,
     "MinFormFillTimeSeconds": 2,
-    "SpamConfidenceThreshold": 0.7
+    "MaxFormFillTimeSeconds": 3600,
+    "RandomTextCheckFields": [
+      "name",
+      "message"
+    ],
+    "RandomTextThreshold": 1,
+    "EnableRateLimit": true,
+    "RateLimitWindowMinutes": 10,
+    "RateLimitMaxSubmissions": 3,
+    "SpamConfidenceThreshold": 0.7,
+    "SpamKeywords": [
+      "casino",
+      "lottery"
+    ]
   }
 }
 ```
