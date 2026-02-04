@@ -192,7 +192,7 @@ Flags submissions that are too fast (< 2 seconds by default).
 
 ### 4. **RandomTextRule** (Severity: 0.85)
 Detects gibberish patterns like:
-- Excessive consonants: "MruwAXBlxLlfnUjjZooNVL"
+- Excessive consonants: "MruwABlxLlnUjZooNVL"
 - Random case patterns: "VaZrAuGhTc"
 - Low vowel ratios
 - High character diversity
