@@ -5,8 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
-	  <PackageId>AspNetCore.SpamGuard</PackageId>
-	  <Product>AspNetCore.SpamGuard</Product>
+	  <PackageId>Our.AspNetCore.SpamGuard</PackageId>
+	  <Product>Our.AspNetCore.SpamGuard</Product>
 	  <Title>AspNetCore SpamGuard</Title>
 	  <Version>1.0.0</Version>
 	  <Authors>Pasang Tamang</Authors>
