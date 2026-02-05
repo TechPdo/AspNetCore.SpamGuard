@@ -1,6 +1,6 @@
 # Our.AspNetCore.SpamGuard
 
-[![NuGet](https://img.shields.io/nuget/v/AspNetCore.SpamGuard.svg)](https://www.nuget.org/packages/Our.AspNetCore.SpamGuard)
+[![NuGet](https://img.shields.io/nuget/v/Our.AspNetCore.SpamGuard.svg)](https://www.nuget.org/packages/Our.AspNetCore.SpamGuard/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A comprehensive, multi-layered spam protection library for ASP.NET Core applications. Combines Google reCAPTCHA v3, honeypot fields, timing analysis, pattern detection, and rate limiting to effectively block spam submissions.
