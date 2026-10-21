@@ -9,13 +9,11 @@ namespace AspNetCore.SpamGuard.Rules;
 /// </summary>
 public class HoneypotRule : ISpamRule
 {
-    public string RuleName => "Honeypot";
-    public double Severity => 0.95; // Very high confidence if honeypot is filled
+    public string RuleName => SpamRuleNames.Honeypot;
+    public double Severity => 0.95;
 
     public Task<bool> IsSpamAsync(SpamCheckContext context, CancellationToken cancellationToken = default)
     {
-        // If honeypot field has any value, it's likely spam
-        var isSpam = !string.IsNullOrWhiteSpace(context.HoneypotValue);
-        return Task.FromResult(isSpam);
+        return Task.FromResult(!string.IsNullOrWhiteSpace(context.HoneypotValue));
     }
 }

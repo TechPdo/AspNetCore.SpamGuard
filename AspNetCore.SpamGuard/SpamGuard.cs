@@ -1,5 +1,6 @@
 using AspNetCore.SpamGuard.Abstractions;
 using AspNetCore.SpamGuard.Models;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AspNetCore.SpamGuard;
@@ -7,57 +8,68 @@ namespace AspNetCore.SpamGuard;
 /// <summary>
 /// Main spam detection service that orchestrates all spam rules.
 /// </summary>
-internal class SpamGuard : ISpamGuard
+internal sealed class SpamGuard : ISpamGuard
 {
     private readonly IEnumerable<ISpamRule> _rules;
     private readonly SpamGuardOptions _options;
+    private readonly ILogger<SpamGuard> _logger;
 
-    public SpamGuard(IEnumerable<ISpamRule> rules, IOptions<SpamGuardOptions> options)
+    public SpamGuard(IEnumerable<ISpamRule> rules, IOptions<SpamGuardOptions> options, ILogger<SpamGuard> logger)
     {
         _rules = rules;
         _options = options.Value;
+        _logger = logger;
     }
 
     public async Task<SpamCheckResult> CheckAsync(SpamCheckContext context, CancellationToken cancellationToken = default)
     {
-        var result = new SpamCheckResult();
-        var triggeredRules = new List<(string Name, double Severity)>();
+        ArgumentNullException.ThrowIfNull(context);
 
-        // Execute all rules
+        var result = new SpamCheckResult();
+        var disabled = new HashSet<string>(_options.DisabledRules ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        var notSpamProbability = 1.0;
+
         foreach (var rule in _rules)
         {
+            if (disabled.Contains(rule.RuleName))
+            {
+                continue;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
             try
             {
-                var isSpam = await rule.IsSpamAsync(context, cancellationToken);
-                
-                if (isSpam)
+                if (await rule.IsSpamAsync(context, cancellationToken).ConfigureAwait(false))
                 {
-                    triggeredRules.Add((rule.RuleName, rule.Severity));
+                    var severity = Math.Clamp(rule.Severity, 0, 1);
+                    notSpamProbability *= 1 - severity;
                     result.TriggeredRules.Add(rule.RuleName);
-                    result.Messages.Add($"{rule.RuleName} rule triggered (severity: {rule.Severity:F2})");
+                    result.Messages.Add($"{rule.RuleName} rule triggered (severity: {severity:F2})");
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
-                // Log the exception in production
-                // Don't let one rule failure break the entire check
-                result.Messages.Add($"{rule.RuleName} rule failed: {ex.Message}");
+                // A failing rule must not break the whole check; details go to the log, not the result.
+                _logger.LogError(ex, "SpamGuard rule {RuleName} failed and was skipped.", rule.RuleName);
+                result.FailedRules.Add(rule.RuleName);
+                result.Messages.Add($"{rule.RuleName} rule could not be evaluated.");
             }
         }
 
-        // Calculate overall confidence score
-        if (triggeredRules.Any())
+        result.ConfidenceScore = result.TriggeredRules.Count == 0 ? 0 : 1 - notSpamProbability;
+        result.IsSpam = result.TriggeredRules.Count > 0 && result.ConfidenceScore >= _options.SpamConfidenceThreshold;
+
+        if (result.IsSpam)
         {
-            // Use weighted average of triggered rules
-            result.ConfidenceScore = triggeredRules.Average(r => r.Severity);
-            
-            // Determine if it's spam based on threshold
-            result.IsSpam = result.ConfidenceScore >= _options.SpamConfidenceThreshold;
-        }
-        else
-        {
-            result.IsSpam = false;
-            result.ConfidenceScore = 0;
+            _logger.LogInformation(
+                "SpamGuard flagged submission as spam. Score: {Score:F2}, Rules: {Rules}",
+                result.ConfidenceScore,
+                string.Join(", ", result.TriggeredRules));
         }
 
         return result;

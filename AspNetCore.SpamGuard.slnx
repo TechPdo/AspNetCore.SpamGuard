@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="AspNetCore.SpamGuard.Tests/AspNetCore.SpamGuard.Tests.csproj" />
   <Project Path="AspNetCore.SpamGuard.Web/AspNetCore.SpamGuard.Web.csproj" Id="45c6b48f-7b8e-4c8a-9c86-5608127ab931" />
   <Project Path="AspNetCore.SpamGuard/AspNetCore.SpamGuard.csproj" />
 </Solution>

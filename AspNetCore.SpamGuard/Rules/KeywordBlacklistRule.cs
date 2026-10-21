@@ -1,45 +1,52 @@
-﻿using AspNetCore.SpamGuard.Abstractions;
+using System.Text.RegularExpressions;
+using AspNetCore.SpamGuard.Abstractions;
 using AspNetCore.SpamGuard.Models;
 using Microsoft.Extensions.Options;
 
 namespace AspNetCore.SpamGuard.Rules;
 
 /// <summary>
-/// Example: Detects known spam keywords. Keywords are loaded from configuration (SpamGuard:SpamKeywords).
-/// If none are provided, the rule uses an empty list (no fallback defaults).
+/// Detects known spam keywords (whole-word, case-insensitive). Keywords come from
+/// <see cref="SpamGuardOptions.SpamKeywords"/>; the rule does nothing when none are configured.
 /// </summary>
 public class KeywordBlacklistRule : ISpamRule
 {
-    public string RuleName => "KeywordBlacklist";
-    public double Severity => 0.65;
+    private static readonly TimeSpan MatchTimeout = TimeSpan.FromMilliseconds(250);
 
-    private readonly string[] _spamKeywords;
+    private readonly Regex? _keywordRegex;
+
+    public string RuleName => SpamRuleNames.KeywordBlacklist;
+    public double Severity => 0.65;
 
     public KeywordBlacklistRule(IOptions<SpamGuardOptions> options)
     {
-        // Use configured keywords or an empty array when not provided.
-        _spamKeywords = options?.Value?.SpamKeywords ?? Array.Empty<string>();
+        var keywords = (options.Value.SpamKeywords ?? Array.Empty<string>())
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .Select(k => Regex.Escape(k.Trim()))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (keywords.Length > 0)
+        {
+            _keywordRegex = new Regex(
+                $@"(?<!\w)(?:{string.Join("|", keywords)})(?!\w)",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+                MatchTimeout);
+        }
     }
 
     public Task<bool> IsSpamAsync(SpamCheckContext context, CancellationToken cancellationToken = default)
     {
-        var textFields = context.FormData.Values
-            .Where(v => !string.IsNullOrWhiteSpace(v))
-            .Select(v => v.ToLowerInvariant());
-
-        var loweredKeywords = _spamKeywords
-            .Where(k => !string.IsNullOrWhiteSpace(k))
-            .Select(k => k.ToLowerInvariant())
-            .ToArray();
-
-        foreach (var text in textFields)
+        if (_keywordRegex is null)
         {
-            foreach (var keyword in loweredKeywords)
+            return Task.FromResult(false);
+        }
+
+        foreach (var value in context.FormData.Values)
+        {
+            if (!string.IsNullOrWhiteSpace(value) && _keywordRegex.IsMatch(value))
             {
-                if (text.Contains(keyword))
-                {
-                    return Task.FromResult(true);
-                }
+                return Task.FromResult(true);
             }
         }
 

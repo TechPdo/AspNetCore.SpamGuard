@@ -6,46 +6,56 @@ namespace AspNetCore.SpamGuard.Rules;
 
 /// <summary>
 /// Detects spam based on form submission timing.
-/// Bots typically submit forms too quickly or at suspiciously consistent intervals.
+/// Prefers the server-signed <see cref="SpamCheckContext.FormToken"/>; falls back to client timestamps.
 /// </summary>
 public class TimingRule : ISpamRule
 {
     private readonly SpamGuardOptions _options;
+    private readonly ISpamGuardFormTokenService _tokenService;
+    private readonly TimeProvider _timeProvider;
 
-    public string RuleName => "Timing";
+    public string RuleName => SpamRuleNames.Timing;
     public double Severity => 0.7;
 
-    public TimingRule(IOptions<SpamGuardOptions> options)
+    public TimingRule(IOptions<SpamGuardOptions> options, ISpamGuardFormTokenService tokenService, TimeProvider timeProvider)
     {
         _options = options.Value;
+        _tokenService = tokenService;
+        _timeProvider = timeProvider;
     }
 
     public Task<bool> IsSpamAsync(SpamCheckContext context, CancellationToken cancellationToken = default)
     {
-        if (!context.FormRenderedAt.HasValue || !context.FormSubmittedAt.HasValue)
+        double elapsedSeconds;
+
+        if (!string.IsNullOrWhiteSpace(context.FormToken))
         {
-            // Can't check timing without both timestamps
-            return Task.FromResult(false);
+            if (!_tokenService.TryValidateToken(context.FormToken, out var issuedAt))
+            {
+                return Task.FromResult(true); // forged or tampered token
+            }
+
+            elapsedSeconds = (_timeProvider.GetUtcNow() - issuedAt).TotalSeconds;
+        }
+        else if (_options.RequireFormToken)
+        {
+            return Task.FromResult(true);
+        }
+        else if (context.FormRenderedAt is > 0)
+        {
+            var submittedAt = context.FormSubmittedAt ?? _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
+            elapsedSeconds = (submittedAt - context.FormRenderedAt.Value) / 1000.0;
+        }
+        else
+        {
+            return Task.FromResult(false); // no timing information available
         }
 
-        var elapsedMs = context.FormSubmittedAt.Value - context.FormRenderedAt.Value;
-        var elapsedSeconds = elapsedMs / 1000.0;
-
-        // Too fast - bot filled it instantly
         if (elapsedSeconds < _options.MinFormFillTimeSeconds)
         {
             return Task.FromResult(true);
         }
 
-        // Too slow - might be a bot that waits a fixed time
-        // or someone who left the form open for days (less reliable signal)
-        if (elapsedSeconds > _options.MaxFormFillTimeSeconds)
-        {
-            // This is a weaker signal, so you might want to lower severity
-            // or only flag if combined with other rules
-            return Task.FromResult(false); // Disabled by default - can enable if needed
-        }
-
-        return Task.FromResult(false);
+        return Task.FromResult(_options.FlagStaleSubmissions && elapsedSeconds > _options.MaxFormFillTimeSeconds);
     }
 }

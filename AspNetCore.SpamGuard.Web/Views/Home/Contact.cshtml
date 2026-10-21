@@ -1,8 +1,15 @@
-﻿@{
+@using Microsoft.Extensions.Options
+@inject IOptions<AspNetCore.SpamGuard.SpamGuardOptions> SpamGuardOptions
+@{
     ViewData["Title"] = "Contact";
+    var siteKey = SpamGuardOptions.Value.RecaptchaSiteKey;
+    var recaptchaEnabled = !string.IsNullOrWhiteSpace(siteKey);
 }
-<!-- Google reCAPTCHA v3 -->
-<script src="https://www.google.com/recaptcha/api.js?render=6Lc36l4sAAAAALpNCP7Q1Ca1PL8mjVQCr_UEEVd8"></script>
+@if (recaptchaEnabled)
+{
+    <!-- Google reCAPTCHA v3 -->
+    <script src="https://www.google.com/recaptcha/api.js?render=@siteKey"></script>
+}
 <style>
     .form-container {
         background: white;
@@ -39,15 +46,6 @@
     textarea {
         min-height: 120px;
         resize: vertical;
-    }
-
-    /* IMPORTANT: Honeypot field styling - hide but keep in DOM */
-    .honeypot {
-        position: absolute !important;
-        left: -9999px !important;
-        width: 1px !important;
-        height: 1px !important;
-        opacity: 0 !important;
     }
 
     button {
@@ -88,12 +86,6 @@
         color: #721c24;
         border: 1px solid #f5c6cb;
     }
-
-    .recaptcha-badge {
-        margin-top: 20px;
-        font-size: 12px;
-        color: #999;
-    }
 </style>
 <div class="form-container">
     <h2>Contact Us</h2>
@@ -101,32 +93,26 @@
     <form id="contactForm">
         <div class="form-group">
             <label for="name">Name *</label>
-            <input type="text" id="name" name="name" required>
+            <input type="text" id="name" name="name" required maxlength="100">
         </div>
 
         <div class="form-group">
             <label for="email">Email *</label>
-            <input type="email" id="email" name="email" required>
+            <input type="email" id="email" name="email" required maxlength="320">
         </div>
 
         <div class="form-group">
             <label for="phone">Phone</label>
-            <input type="tel" id="phone" name="phone">
-        </div>
-
-        <div class="honeypot" aria-hidden="true">
-            <label for="website">Website (leave blank)</label>
-            <input type="text" id="website" name="website" style="position:absolute;left:-9999px" tabindex="-1" autocomplete="off" />
+            <input type="tel" id="phone" name="phone" maxlength="30">
         </div>
 
         <div class="form-group">
             <label for="message">Message *</label>
-            <textarea id="message" name="message" required></textarea>
+            <textarea id="message" name="message" required maxlength="5000"></textarea>
         </div>
 
-        <!-- Hidden fields for spam detection -->
-        <input type="hidden" id="formRenderedAt" name="formRenderedAt">
-        <input type="hidden" id="recaptchaToken" name="recaptchaToken">
+        <!-- Honeypot, signed render timestamp and reCAPTCHA token field -->
+        <spam-guard-fields include-recaptcha="@recaptchaEnabled" />
 
         <button type="submit" id="submitBtn">Send Message</button>
     </form>
@@ -135,75 +121,64 @@
 </div>
 
 <script>
-    // Configuration
-    const RECAPTCHA_SITE_KEY = '6Lc36l4sAAAAALpNCP7Q1Ca1PL8mjVQCr_UEEVd8'; // Replace with your actual site key
-    const API_ENDPOINT = '/api/contact'; // Your API endpoint
+    const RECAPTCHA_SITE_KEY = '@siteKey';
+    const API_ENDPOINT = '/api/contact';
+    const form = document.getElementById('contactForm');
+    const field = name => form.querySelector(`[name="${name}"]`);
 
-    // Set form render time when page loads
-    document.getElementById('formRenderedAt').value = Date.now();
-
-    // Form submission handler
-    document.getElementById('contactForm').addEventListener('submit', async function(e) {
+    form.addEventListener('submit', async function (e) {
         e.preventDefault();
 
         const submitBtn = document.getElementById('submitBtn');
-        const messageBox = document.getElementById('messageBox');
-
-        // Disable submit button
         submitBtn.disabled = true;
         submitBtn.textContent = 'Sending...';
 
         try {
-            // Execute reCAPTCHA v3
-            const token = await new Promise((resolve, reject) => {
-                grecaptcha.ready(function() {
-                    grecaptcha.execute(RECAPTCHA_SITE_KEY, { action: 'submit' })
-                        .then(resolve)
-                        .catch(reject);
+            // Execute reCAPTCHA v3 only when a site key is configured
+            let token = null;
+            if (RECAPTCHA_SITE_KEY && window.grecaptcha) {
+                token = await new Promise((resolve, reject) => {
+                    grecaptcha.ready(function () {
+                        grecaptcha.execute(RECAPTCHA_SITE_KEY, { action: 'submit' })
+                            .then(resolve)
+                            .catch(reject);
+                    });
                 });
-            });
+            }
 
-            // Set reCAPTCHA token
-            document.getElementById('recaptchaToken').value = token;
-
-            // Collect form data
             const formData = {
-                name: document.getElementById('name').value,
-                email: document.getElementById('email').value,
-                phone: document.getElementById('phone').value,
-                message: document.getElementById('message').value,
-                website: document.getElementById('website').value, // Honeypot
+                name: field('name').value,
+                email: field('email').value,
+                phone: field('phone').value,
+                message: field('message').value,
+                website: field('website')?.value ?? '', // Honeypot
                 recaptchaToken: token,
-                formRenderedAt: parseInt(document.getElementById('formRenderedAt').value)
+                formToken: field('__SpamGuardToken')?.value ?? null // Signed server-side render timestamp
             };
 
-            // Submit to API
             const response = await fetch(API_ENDPOINT, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(formData)
             });
 
             const result = await response.json();
 
-            if (response.ok && result.success) {
-                // Show success message
-                showMessage(result.message || 'Thank you! Your message has been sent.', 'success');
-
-                // Reset form
-                document.getElementById('contactForm').reset();
-                document.getElementById('formRenderedAt').value = Date.now();
-            } else {
-                showMessage(result.message || 'Something went wrong. Please try again.', 'error');
+            if (result.diagnostics) {
+                console.info('SpamGuard diagnostics (Development only):', result.diagnostics);
             }
 
+            if (response.ok && result.success) {
+                showMessage(result.message || 'Thank you! Your message has been sent.', 'success');
+                // The signed token is not a form value the user edits, so reset() keeps it.
+                form.reset();
+            } else {
+                showMessage(result.message || result.title || 'Something went wrong. Please try again.', 'error');
+            }
         } catch (error) {
             console.error('Submission error:', error);
             showMessage('An error occurred. Please try again later.', 'error');
         } finally {
-            // Re-enable submit button
             submitBtn.disabled = false;
             submitBtn.textContent = 'Send Message';
         }
@@ -214,18 +189,13 @@
         messageBox.textContent = text;
         messageBox.className = 'message ' + type;
         messageBox.style.display = 'block';
-
-        // Auto-hide after 5 seconds
-        setTimeout(() => {
-            messageBox.style.display = 'none';
-        }, 5000);
+        setTimeout(() => { messageBox.style.display = 'none'; }, 5000);
     }
 
-    // Optional: Detect if honeypot is filled (for debugging)
     if (window.location.hostname === 'localhost') {
-        document.getElementById('website').addEventListener('input', function() {
+        field('website')?.addEventListener('input', function () {
             if (this.value) {
-                console.warn('⚠️ Honeypot field was filled! This submission will be flagged as spam.');
+                console.warn('Honeypot field was filled! This submission will be flagged as spam.');
             }
         });
     }
