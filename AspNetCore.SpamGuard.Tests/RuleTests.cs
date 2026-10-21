@@ -150,6 +150,22 @@ public class TimingRuleTests
     }
 
     [Fact]
+    public async Task Signed_token_uses_submission_time_after_delayed_rule_evaluation()
+    {
+        var (sp, time, rule, tokens) = Setup();
+        using var _ = sp;
+        var context = new SpamCheckContext
+        {
+            FormToken = tokens.GenerateToken(),
+            FormSubmittedAt = time.GetUtcNow().ToUnixTimeMilliseconds()
+        };
+
+        time.Advance(TimeSpan.FromSeconds(5));
+
+        Assert.True(await rule.IsSpamAsync(context));
+    }
+
+    [Fact]
     public async Task Tampered_token_is_spam()
     {
         var (sp, time, rule, tokens) = Setup();
@@ -192,6 +208,24 @@ public class TimingRuleTests
         time.Advance(TimeSpan.FromHours(2));
 
         Assert.True(await rule.IsSpamAsync(context));
+    }
+
+    [Fact]
+    public async Task Delayed_rule_evaluation_does_not_flag_submission_as_stale()
+    {
+        var (sp, time, rule, tokens) = Setup(o => o.FlagStaleSubmissions = true);
+        using var _ = sp;
+        var token = tokens.GenerateToken();
+        time.Advance(TimeSpan.FromSeconds(30));
+        var context = new SpamCheckContext
+        {
+            FormToken = token,
+            FormSubmittedAt = time.GetUtcNow().ToUnixTimeMilliseconds()
+        };
+
+        time.Advance(TimeSpan.FromHours(2));
+
+        Assert.False(await rule.IsSpamAsync(context));
     }
 }
 

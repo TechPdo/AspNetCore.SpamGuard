@@ -35,7 +35,10 @@ public class TimingRule : ISpamRule
                 return Task.FromResult(true); // forged or tampered token
             }
 
-            elapsedSeconds = (_timeProvider.GetUtcNow() - issuedAt).TotalSeconds;
+            var submittedAt = context.FormSubmittedAt is long timestamp
+                ? DateTimeOffset.FromUnixTimeMilliseconds(timestamp)
+                : _timeProvider.GetUtcNow();
+            elapsedSeconds = (submittedAt - issuedAt).TotalSeconds;
         }
         else if (_options.RequireFormToken)
         {
