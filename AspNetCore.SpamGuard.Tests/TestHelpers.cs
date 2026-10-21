@@ -50,7 +50,7 @@ internal static class TestServices
 {
     public static void NoRecaptcha(SpamGuardOptions o) => o.RequireRecaptcha = false;
 
-    public static ServiceProvider Build(Action<SpamGuardOptions>? configure = null, Action<IServiceCollection>? extra = null, ManualTimeProvider? time = null)
+    public static ServiceProvider Build(Action<SpamGuardOptions>? configure = null, Action<IServiceCollection>? extra = null, TimeProvider? time = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());

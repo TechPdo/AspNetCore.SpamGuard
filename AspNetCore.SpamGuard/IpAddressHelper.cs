@@ -5,6 +5,33 @@ namespace AspNetCore.SpamGuard;
 
 internal static class IpAddressHelper
 {
+    private static readonly (IPAddress Network, int PrefixLength)[] NonPublicIPv4Networks =
+    {
+        (IPAddress.Parse("0.0.0.0"), 8),
+        (IPAddress.Parse("10.0.0.0"), 8),
+        (IPAddress.Parse("100.64.0.0"), 10),
+        (IPAddress.Parse("127.0.0.0"), 8),
+        (IPAddress.Parse("169.254.0.0"), 16),
+        (IPAddress.Parse("172.16.0.0"), 12),
+        (IPAddress.Parse("192.0.0.0"), 24),
+        (IPAddress.Parse("192.0.2.0"), 24),
+        (IPAddress.Parse("192.88.99.0"), 24),
+        (IPAddress.Parse("192.168.0.0"), 16),
+        (IPAddress.Parse("198.18.0.0"), 15),
+        (IPAddress.Parse("198.51.100.0"), 24),
+        (IPAddress.Parse("203.0.113.0"), 24),
+        (IPAddress.Parse("224.0.0.0"), 4),
+        (IPAddress.Parse("240.0.0.0"), 4)
+    };
+    private static readonly (IPAddress Network, int PrefixLength)[] NonGlobalIPv6Networks =
+    {
+        (IPAddress.Parse("2001::"), 23),
+        (IPAddress.Parse("2001:db8::"), 32),
+        (IPAddress.Parse("2002::"), 16),
+        (IPAddress.Parse("3fff::"), 20)
+    };
+    private static readonly IPAddress IPv6GlobalUnicastNetwork = IPAddress.Parse("2000::");
+
     /// <summary>
     /// Returns true when the address is a publicly routable unicast address.
     /// </summary>
@@ -20,34 +47,43 @@ internal static class IpAddressHelper
             address = address.MapToIPv4();
         }
 
-        if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any) ||
-            address.Equals(IPAddress.None) || address.Equals(IPAddress.IPv6None))
-        {
-            return false;
-        }
-
         if (address.AddressFamily == AddressFamily.InterNetwork)
         {
-            var b = address.GetAddressBytes();
-            return !(b[0] == 10 ||
-                     b[0] == 0 ||
-                     (b[0] == 100 && b[1] >= 64 && b[1] <= 127) ||  // 100.64.0.0/10 (CGNAT)
-                     (b[0] == 169 && b[1] == 254) ||                 // link-local
-                     (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
-                     (b[0] == 192 && b[1] == 168) ||
-                     b[0] >= 224);                                   // multicast / reserved
+            return !NonPublicIPv4Networks.Any(range => IsInSubnet(address, range.Network, range.PrefixLength));
         }
 
         if (address.AddressFamily == AddressFamily.InterNetworkV6)
         {
-            var b = address.GetAddressBytes();
-            return !(address.IsIPv6LinkLocal ||
-                     address.IsIPv6SiteLocal ||
-                     address.IsIPv6Multicast ||
-                     (b[0] & 0xFE) == 0xFC);                         // fc00::/7 unique local
+            return IsInSubnet(address, IPv6GlobalUnicastNetwork, 3) &&
+                   !NonGlobalIPv6Networks.Any(range => IsInSubnet(address, range.Network, range.PrefixLength));
         }
 
         return false;
+    }
+
+    private static bool IsInSubnet(IPAddress address, IPAddress network, int prefixLength)
+    {
+        var addressBytes = address.GetAddressBytes();
+        var networkBytes = network.GetAddressBytes();
+        if (addressBytes.Length != networkBytes.Length)
+        {
+            return false;
+        }
+
+        var fullBytes = prefixLength / 8;
+        if (!addressBytes.AsSpan(0, fullBytes).SequenceEqual(networkBytes.AsSpan(0, fullBytes)))
+        {
+            return false;
+        }
+
+        var remainingBits = prefixLength % 8;
+        if (remainingBits == 0)
+        {
+            return true;
+        }
+
+        var mask = (byte)(0xFF << (8 - remainingBits));
+        return (addressBytes[fullBytes] & mask) == (networkBytes[fullBytes] & mask);
     }
 
     /// <summary>

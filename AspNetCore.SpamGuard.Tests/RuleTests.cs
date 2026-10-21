@@ -85,6 +85,39 @@ public class KeywordAndEmailRuleTests
 
 public class RateLimitRuleTests
 {
+    private sealed class ReorderedTimeProvider : TimeProvider
+    {
+        private static readonly DateTimeOffset Start = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        private int _calls;
+
+        public ManualResetEventSlim FirstCallEntered { get; } = new();
+        public ManualResetEventSlim ReleaseFirstCall { get; } = new();
+        public ManualResetEventSlim SecondCallEntered { get; } = new();
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            return Interlocked.Increment(ref _calls) switch
+            {
+                1 => FirstCall(),
+                2 => SecondCall(),
+                _ => Start.AddMinutes(11)
+            };
+        }
+
+        private DateTimeOffset FirstCall()
+        {
+            FirstCallEntered.Set();
+            ReleaseFirstCall.Wait();
+            return Start;
+        }
+
+        private DateTimeOffset SecondCall()
+        {
+            SecondCallEntered.Set();
+            return Start.AddMinutes(8);
+        }
+    }
+
     [Fact]
     public async Task Blocks_after_limit_and_recovers_after_window()
     {
@@ -124,6 +157,44 @@ public class RateLimitRuleTests
             Task.Run(() => sp.Rule<RateLimitRule>().IsSpamAsync(context))));
 
         Assert.Equal(50, results.Count(r => !r));
+    }
+
+    [Fact]
+    public async Task Samples_time_inside_bucket_lock_to_preserve_pruning_order()
+    {
+        var time = new ReorderedTimeProvider();
+        using var sp = TestServices.Build(o =>
+        {
+            o.RateLimitMaxSubmissions = 2;
+            o.RateLimitWindowMinutes = 10;
+        }, time: time);
+        var rule = sp.Rule<RateLimitRule>();
+        var context = new SpamCheckContext { IpAddress = "8.8.8.8" };
+
+        var first = Task.Factory.StartNew(
+            () => rule.IsSpamAsync(context),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default).Unwrap();
+        Assert.True(time.FirstCallEntered.Wait(TimeSpan.FromSeconds(5)));
+
+        using var secondStarted = new ManualResetEventSlim();
+        var second = Task.Factory.StartNew(
+            () =>
+            {
+                secondStarted.Set();
+                return rule.IsSpamAsync(context);
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default).Unwrap();
+        Assert.True(secondStarted.Wait(TimeSpan.FromSeconds(5)));
+        var sampledSecondTimeEarly = time.SecondCallEntered.Wait(TimeSpan.FromMilliseconds(100));
+        time.ReleaseFirstCall.Set();
+        await Task.WhenAll(first, second);
+
+        Assert.False(sampledSecondTimeEarly);
+        Assert.False(await rule.IsSpamAsync(context));
     }
 }
 

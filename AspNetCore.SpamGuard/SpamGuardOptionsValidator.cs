@@ -17,10 +17,10 @@ internal sealed class SpamGuardOptionsValidator : IValidateOptions<SpamGuardOpti
                        $"Configure the secret key or set {nameof(SpamGuardOptions.RequireRecaptcha)} to false.");
         }
 
-        if (options.RecaptchaMinScore is < 0 or > 1)
+        if (!double.IsFinite(options.RecaptchaMinScore) || options.RecaptchaMinScore is < 0 or > 1)
             errors.Add($"{nameof(SpamGuardOptions.RecaptchaMinScore)} must be between 0 and 1.");
 
-        if (options.SpamConfidenceThreshold is <= 0 or > 1)
+        if (!double.IsFinite(options.SpamConfidenceThreshold) || options.SpamConfidenceThreshold is <= 0 or > 1)
             errors.Add($"{nameof(SpamGuardOptions.SpamConfidenceThreshold)} must be greater than 0 and at most 1.");
 
         if (options.MinFormFillTimeSeconds < 0)

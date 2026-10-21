@@ -123,8 +123,10 @@
 <script>
     const RECAPTCHA_SITE_KEY = '@siteKey';
     const API_ENDPOINT = '/api/contact';
+    const HONEYPOT_FIELD_NAME = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(SpamGuardOptions.Value.HoneypotFieldName));
+    const FORM_TOKEN_FIELD_NAME = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(SpamGuardOptions.Value.FormTokenFieldName));
     const form = document.getElementById('contactForm');
-    const field = name => form.querySelector(`[name="${name}"]`);
+    const field = name => form.elements.namedItem(name);
 
     form.addEventListener('submit', async function (e) {
         e.preventDefault();
@@ -151,9 +153,9 @@
                 email: field('email').value,
                 phone: field('phone').value,
                 message: field('message').value,
-                website: field('website')?.value ?? '', // Honeypot
+                website: field(HONEYPOT_FIELD_NAME)?.value ?? '', // Honeypot
                 recaptchaToken: token,
-                formToken: field('__SpamGuardToken')?.value ?? null // Signed server-side render timestamp
+                formToken: field(FORM_TOKEN_FIELD_NAME)?.value ?? null // Signed server-side render timestamp
             };
 
             const response = await fetch(API_ENDPOINT, {
@@ -193,7 +195,7 @@
     }
 
     if (window.location.hostname === 'localhost') {
-        field('website')?.addEventListener('input', function () {
+        field(HONEYPOT_FIELD_NAME)?.addEventListener('input', function () {
             if (this.value) {
                 console.warn('Honeypot field was filled! This submission will be flagged as spam.');
             }

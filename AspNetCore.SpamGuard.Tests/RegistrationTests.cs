@@ -82,6 +82,23 @@ public class RegistrationTests
         Assert.Contains(ex.Failures, f => f.Contains("BaseUrl"));
     }
 
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void Non_finite_score_thresholds_fail_validation(double threshold)
+    {
+        using var sp = TestServices.Build(o =>
+        {
+            o.RecaptchaMinScore = threshold;
+            o.SpamConfidenceThreshold = threshold;
+        });
+
+        var ex = Assert.Throws<OptionsValidationException>(() => sp.GetRequiredService<IOptions<SpamGuardOptions>>().Value);
+        Assert.Contains(ex.Failures, f => f.Contains("RecaptchaMinScore"));
+        Assert.Contains(ex.Failures, f => f.Contains("SpamConfidenceThreshold"));
+    }
+
     [Fact]
     public void FormData_lookup_is_case_insensitive_even_for_assigned_dictionaries()
     {

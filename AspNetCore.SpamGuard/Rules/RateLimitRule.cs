@@ -40,11 +40,11 @@ public class RateLimitRule : ISpamRule
 
         var window = TimeSpan.FromMinutes(_options.RateLimitWindowMinutes);
         var bucket = GetBucket(CacheKeyPrefix + IpAddressHelper.GetClientKey(context.IpAddress), window);
-        var now = _timeProvider.GetUtcNow();
-        var windowStart = now - window;
-
         lock (bucket)
         {
+            var now = _timeProvider.GetUtcNow();
+            var windowStart = now - window;
+
             while (bucket.Count > 0 && bucket.Peek() <= windowStart)
             {
                 bucket.Dequeue();

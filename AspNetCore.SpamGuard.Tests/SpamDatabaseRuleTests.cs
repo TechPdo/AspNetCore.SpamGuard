@@ -9,7 +9,7 @@ namespace AspNetCore.SpamGuard.Tests;
 public class SpamDatabaseRuleTests
 {
     private const string ListedResponse =
-        """{"success":1,"ip":{"value":"203.0.113.5","appears":1,"frequency":42,"confidence":91.5},"emailhash":{"value":"x","appears":0,"frequency":0}}""";
+        """{"success":1,"ip":{"value":"8.8.8.8","appears":1,"frequency":42,"confidence":91.5},"emailhash":{"value":"x","appears":0,"frequency":0}}""";
 
     private static (ServiceProvider Sp, StubHandler Handler) Setup(Func<HttpRequestMessage, HttpResponseMessage> respond, Action<SpamGuardOptions>? configure = null)
     {
@@ -28,7 +28,7 @@ public class SpamDatabaseRuleTests
         var handler = new StubHandler(_ => Json(ListedResponse));
         using var sp = TestServices.Build(extra: s => s.AddHttpClient<IStopForumSpamClient, StopForumSpamClient>().ConfigurePrimaryHttpMessageHandler(() => handler));
 
-        Assert.False(await sp.Rule<SpamDatabaseRule>().IsSpamAsync(new SpamCheckContext { IpAddress = "203.0.113.5" }));
+        Assert.False(await sp.Rule<SpamDatabaseRule>().IsSpamAsync(new SpamCheckContext { IpAddress = "8.8.8.8" }));
         Assert.Empty(handler.Requests);
     }
 
@@ -37,14 +37,14 @@ public class SpamDatabaseRuleTests
     {
         var (sp, handler) = Setup(_ => Json(ListedResponse));
         using var _ = sp;
-        var context = new SpamCheckContext { IpAddress = "203.0.113.5" };
+        var context = new SpamCheckContext { IpAddress = "8.8.8.8" };
 
         Assert.True(await sp.Rule<SpamDatabaseRule>().IsSpamAsync(context));
         Assert.True(await sp.Rule<SpamDatabaseRule>().IsSpamAsync(context));
 
         var request = Assert.Single(handler.Requests);
         Assert.Equal("api.stopforumspam.org", request.Host);
-        Assert.Contains("ip=203.0.113.5", request.Query);
+        Assert.Contains("ip=8.8.8.8", request.Query);
         Assert.Contains("json", request.Query);
     }
 
@@ -53,7 +53,7 @@ public class SpamDatabaseRuleTests
     {
         var (sp, _) = Setup(_ => Json(ListedResponse), o => o.SpamDatabase.MinConfidence = 95);
         using var _ = sp;
-        Assert.False(await sp.Rule<SpamDatabaseRule>().IsSpamAsync(new SpamCheckContext { IpAddress = "203.0.113.5" }));
+        Assert.False(await sp.Rule<SpamDatabaseRule>().IsSpamAsync(new SpamCheckContext { IpAddress = "8.8.8.8" }));
     }
 
     [Theory]
@@ -62,7 +62,22 @@ public class SpamDatabaseRuleTests
     [InlineData("192.168.1.1")]
     [InlineData("::1")]
     [InlineData("fd00::1")]
-    public async Task Private_ips_are_never_sent(string ip)
+    public async Task Non_global_ips_are_never_sent(string ip)
+    {
+        var (sp, handler) = Setup(_ => Json(ListedResponse));
+        using var _ = sp;
+
+        Assert.False(await sp.Rule<SpamDatabaseRule>().IsSpamAsync(new SpamCheckContext { IpAddress = ip }));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("192.0.2.1")]
+    [InlineData("198.18.0.1")]
+    [InlineData("203.0.113.5")]
+    [InlineData("2001:db8::1")]
+    [InlineData("64:ff9b:1::1")]
+    public async Task Special_use_ips_are_never_sent(string ip)
     {
         var (sp, handler) = Setup(_ => Json(ListedResponse));
         using var _ = sp;
@@ -91,15 +106,15 @@ public class SpamDatabaseRuleTests
     {
         var (sp, _) = Setup(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError));
         using var _ = sp;
-        Assert.False(await sp.Rule<SpamDatabaseRule>().IsSpamAsync(new SpamCheckContext { IpAddress = "203.0.113.5" }));
+        Assert.False(await sp.Rule<SpamDatabaseRule>().IsSpamAsync(new SpamCheckContext { IpAddress = "8.8.8.8" }));
 
         var (sp2, _) = Setup(_ => Json("""{"success":0,"error":"rate limited"}"""));
         using var _2 = sp2;
-        Assert.False(await sp2.Rule<SpamDatabaseRule>().IsSpamAsync(new SpamCheckContext { IpAddress = "203.0.113.5" }));
+        Assert.False(await sp2.Rule<SpamDatabaseRule>().IsSpamAsync(new SpamCheckContext { IpAddress = "8.8.8.8" }));
 
         var (sp3, _) = Setup(_ => throw new HttpRequestException("down"));
         using var _3 = sp3;
-        Assert.False(await sp3.Rule<SpamDatabaseRule>().IsSpamAsync(new SpamCheckContext { IpAddress = "203.0.113.5" }));
+        Assert.False(await sp3.Rule<SpamDatabaseRule>().IsSpamAsync(new SpamCheckContext { IpAddress = "8.8.8.8" }));
     }
 
     [Theory]
@@ -110,6 +125,13 @@ public class SpamDatabaseRuleTests
     [InlineData("172.20.0.1", false)]
     [InlineData("100.64.0.1", false)]
     [InlineData("169.254.1.1", false)]
+    [InlineData("192.0.2.1", false)]
+    [InlineData("198.18.0.1", false)]
+    [InlineData("203.0.113.5", false)]
+    [InlineData("2001:db8::1", false)]
+    [InlineData("64:ff9b:1::1", false)]
+    [InlineData("2002::1", false)]
+    [InlineData("3fff::1", false)]
     [InlineData("not-an-ip", false)]
     [InlineData(null, false)]
     public void Public_ip_detection(string? ip, bool expected) => Assert.Equal(expected, IpAddressHelper.IsPublic(ip));
