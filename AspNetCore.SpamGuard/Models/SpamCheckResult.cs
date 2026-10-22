@@ -12,6 +12,7 @@ public class SpamCheckResult
 
     /// <summary>
     /// Confidence score (0-1). Higher values indicate higher confidence that it's spam.
+    /// Computed as <c>1 - Π(1 - severity)</c> over the triggered rules.
     /// </summary>
     public double ConfidenceScore { get; set; }
 
@@ -19,6 +20,11 @@ public class SpamCheckResult
     /// List of rule names that were triggered.
     /// </summary>
     public List<string> TriggeredRules { get; set; } = new();
+
+    /// <summary>
+    /// List of rule names that threw an exception and could not be evaluated (details are logged).
+    /// </summary>
+    public List<string> FailedRules { get; set; } = new();
 
     /// <summary>
     /// Detailed messages explaining why certain rules were triggered.

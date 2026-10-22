@@ -1,4 +1,5 @@
-using System.Text.Json;
+using System.Net.Http.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AspNetCore.SpamGuard.Recaptcha;
@@ -6,26 +7,29 @@ namespace AspNetCore.SpamGuard.Recaptcha;
 /// <summary>
 /// Default implementation of reCAPTCHA v3 verification.
 /// </summary>
-internal class RecaptchaVerifier : IRecaptchaVerifier
+internal sealed class RecaptchaVerifier : IRecaptchaVerifier
 {
-    private readonly HttpClient _httpClient;
-    private readonly SpamGuardOptions _options;
     private const string VerifyUrl = "https://www.google.com/recaptcha/api/siteverify";
 
-    public RecaptchaVerifier(HttpClient httpClient, IOptions<SpamGuardOptions> options)
+    private readonly HttpClient _httpClient;
+    private readonly SpamGuardOptions _options;
+    private readonly ILogger<RecaptchaVerifier> _logger;
+
+    public RecaptchaVerifier(HttpClient httpClient, IOptions<SpamGuardOptions> options, ILogger<RecaptchaVerifier> logger)
     {
         _httpClient = httpClient;
         _options = options.Value;
+        _logger = logger;
     }
 
     public async Task<RecaptchaResponse> VerifyAsync(
-        string token, 
-        string? remoteIp = null, 
+        string token,
+        string? remoteIp = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(token))
         {
-            return new RecaptchaResponse { Success = false, Score = 0 };
+            return Failed("missing-input-response");
         }
 
         if (string.IsNullOrWhiteSpace(_options.RecaptchaSecretKey))
@@ -36,36 +40,45 @@ internal class RecaptchaVerifier : IRecaptchaVerifier
 
         var parameters = new Dictionary<string, string>
         {
-            { "secret", _options.RecaptchaSecretKey },
-            { "response", token }
+            ["secret"] = _options.RecaptchaSecretKey,
+            ["response"] = token
         };
 
         if (!string.IsNullOrWhiteSpace(remoteIp))
         {
-            parameters.Add("remoteip", remoteIp);
+            parameters["remoteip"] = remoteIp;
         }
 
         try
         {
-            var response = await _httpClient.PostAsync(
-                VerifyUrl,
-                new FormUrlEncodedContent(parameters),
-                cancellationToken);
-
+            using var content = new FormUrlEncodedContent(parameters);
+            using var response = await _httpClient.PostAsync(VerifyUrl, content, cancellationToken).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
 
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonSerializer.Deserialize<RecaptchaResponse>(json, new JsonSerializerOptions
+            var result = await response.Content.ReadFromJsonAsync<RecaptchaResponse>(cancellationToken).ConfigureAwait(false);
+            if (result is null)
             {
-                PropertyNameCaseInsensitive = true
-            });
+                return Failed("empty-response");
+            }
 
-            return result ?? new RecaptchaResponse { Success = false, Score = 0 };
+            if (!result.Success)
+            {
+                _logger.LogDebug("reCAPTCHA verification failed: {ErrorCodes}", string.Join(", ", result.ErrorCodes ?? new()));
+            }
+
+            return result;
         }
-        catch (Exception)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Log exception in production
-            return new RecaptchaResponse { Success = false, Score = 0 };
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "reCAPTCHA verification request failed.");
+            return Failed("verification-request-failed");
         }
     }
+
+    private static RecaptchaResponse Failed(string errorCode) =>
+        new() { Success = false, Score = 0, ErrorCodes = new List<string> { errorCode } };
 }

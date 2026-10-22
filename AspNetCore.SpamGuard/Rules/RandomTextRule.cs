@@ -1,22 +1,35 @@
+using System.Text.RegularExpressions;
 using AspNetCore.SpamGuard.Abstractions;
 using AspNetCore.SpamGuard.Models;
 using Microsoft.Extensions.Options;
-using System.Text.RegularExpressions;
 
 namespace AspNetCore.SpamGuard.Rules;
 
 /// <summary>
 /// Detects spam by analyzing text patterns for random character sequences.
-/// Example spam patterns: "MruwAXBlxLlfnUjjZooNVL", "VAZRauGhTcJWjswjx"
+/// Example spam patterns: "MruwAXBlxLlfnUjjZooNVL", "VAZRauGhTcJWjswjx".
 /// </summary>
+/// <remarks>
+/// Language-specific heuristics (vowel ratio, consonant runs, missing spaces) only apply to text
+/// written predominantly in Latin script, to avoid flagging other languages.
+/// </remarks>
 public class RandomTextRule : ISpamRule
 {
-    private readonly SpamGuardOptions _options;
-    private static readonly Regex ConsecutiveConsonantsRegex = new(@"[bcdfghjklmnpqrstvwxyz]{5,}", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex ConsecutiveUpperLowerRegex = new(@"[A-Z][a-z][A-Z][a-z]", RegexOptions.Compiled);
-    private static readonly Regex RepeatingPatternsRegex = new(@"(.{2,})\1{2,}", RegexOptions.Compiled);
+    private static readonly TimeSpan MatchTimeout = TimeSpan.FromMilliseconds(100);
 
-    public string RuleName => "RandomText";
+    private static readonly Regex ConsecutiveConsonantsRegex =
+        new(@"[bcdfghjklmnpqrstvwxz]{5,}", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled, MatchTimeout);
+
+    private static readonly Regex ConsecutiveUpperLowerRegex =
+        new(@"[A-Z][a-z][A-Z][a-z]", RegexOptions.CultureInvariant | RegexOptions.Compiled, MatchTimeout);
+
+    // Bounded group length keeps backtracking linear-ish (the unbounded version was vulnerable to ReDoS).
+    private static readonly Regex RepeatingPatternsRegex =
+        new(@"(.{2,20})\1{2,}", RegexOptions.CultureInvariant | RegexOptions.Compiled, MatchTimeout);
+
+    private readonly SpamGuardOptions _options;
+
+    public string RuleName => SpamRuleNames.RandomText;
     public double Severity => 0.85;
 
     public RandomTextRule(IOptions<SpamGuardOptions> options)
@@ -26,79 +39,126 @@ public class RandomTextRule : ISpamRule
 
     public Task<bool> IsSpamAsync(SpamCheckContext context, CancellationToken cancellationToken = default)
     {
-        var fieldsToCheck = _options.RandomTextCheckFields ?? new[] { "name", "message", "subject", "comment" };
+        IReadOnlyList<string> fieldsToCheck = _options.RandomTextCheckFields is { Length: > 0 } configured
+            ? configured
+            : SpamGuardOptions.DefaultRandomTextCheckFields;
+
         var suspiciousCount = 0;
 
-        foreach (var fieldName in fieldsToCheck)
+        foreach (var fieldName in fieldsToCheck.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            if (context.FormData.TryGetValue(fieldName, out var value) && !string.IsNullOrWhiteSpace(value))
+            if (context.FormData.TryGetValue(fieldName, out var value) &&
+                !string.IsNullOrWhiteSpace(value) &&
+                IsRandomText(value))
             {
-                if (IsRandomText(value))
-                {
-                    suspiciousCount++;
-                }
+                suspiciousCount++;
             }
         }
 
-        // If multiple fields contain random text, it's very likely spam
         return Task.FromResult(suspiciousCount >= _options.RandomTextThreshold);
     }
 
-    private bool IsRandomText(string text)
+    internal bool IsRandomText(string text)
     {
+        text = text.Trim();
+        if (text.Length > _options.RandomTextMaxInputLength)
+        {
+            text = text[.._options.RandomTextMaxInputLength];
+        }
+
         if (text.Length < 5)
         {
             return false; // Too short to analyze
         }
 
-        var points = 0;
-
-        // Check 1: Too many consecutive consonants (5+)
-        if (ConsecutiveConsonantsRegex.IsMatch(text))
+        var letterCount = 0;
+        var asciiLetterCount = 0;
+        var vowelCount = 0;
+        foreach (var c in text)
         {
-            points += 2;
-        }
-
-        // Check 2: Alternating upper/lower case (CamelCase spam pattern)
-        var upperLowerMatches = ConsecutiveUpperLowerRegex.Matches(text);
-        if (upperLowerMatches.Count > text.Length / 10)
-        {
-            points += 2;
-        }
-
-        // Check 3: Very low vowel ratio
-        var vowelCount = text.Count(c => "aeiouAEIOU".Contains(c));
-        var consonantCount = text.Count(c => char.IsLetter(c)) - vowelCount;
-        if (consonantCount > 0)
-        {
-            var vowelRatio = (double)vowelCount / consonantCount;
-            if (vowelRatio < 0.2) // Less than 20% vowels
+            if (!char.IsLetter(c))
             {
-                points += 2;
+                continue;
+            }
+
+            letterCount++;
+            if (char.IsAsciiLetter(c))
+            {
+                asciiLetterCount++;
+                if ("aeiouAEIOU".Contains(c))
+                {
+                    vowelCount++;
+                }
             }
         }
 
-        // Check 4: High character diversity (random chars have high entropy)
-        var uniqueChars = text.Distinct().Count();
-        var diversityRatio = (double)uniqueChars / text.Length;
-        if (diversityRatio > 0.7) // More than 70% unique characters
+        var isLatinText = letterCount > 0 && asciiLetterCount >= letterCount * 0.8;
+        var points = 0;
+
+        if (isLatinText)
         {
-            points += 1;
+            // Check 1: Too many consecutive consonants (5+)
+            if (SafeIsMatch(ConsecutiveConsonantsRegex, text))
+            {
+                points += 2;
+            }
+
+            // Check 2: Alternating upper/lower case (CamelCase spam pattern)
+            if (SafeCount(ConsecutiveUpperLowerRegex, text) > text.Length / 10)
+            {
+                points += 2;
+            }
+
+            // Check 3: Very low vowel ratio
+            var consonantCount = asciiLetterCount - vowelCount;
+            if (consonantCount > 0 && (double)vowelCount / consonantCount < 0.2)
+            {
+                points += 2;
+            }
+
+            // Check 5: No spaces in long text (bots often generate continuous strings)
+            if (text.Length > 15 && !text.Contains(' '))
+            {
+                points += 1;
+            }
         }
 
-        // Check 5: No spaces in long text (bots often generate continuous strings)
-        if (text.Length > 15 && !text.Contains(' '))
+        // Check 4: High character diversity (short texts are naturally diverse, so require some length)
+        if (text.Length >= 12 && (double)text.Distinct().Count() / text.Length > 0.7)
         {
             points += 1;
         }
 
         // Check 6: Contains repeating patterns
-        if (RepeatingPatternsRegex.IsMatch(text))
+        if (SafeIsMatch(RepeatingPatternsRegex, text))
         {
             points += 1;
         }
 
-        // Threshold: 4+ points indicates random text
         return points >= 4;
+    }
+
+    private static bool SafeIsMatch(Regex regex, string input)
+    {
+        try
+        {
+            return regex.IsMatch(input);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return false;
+        }
+    }
+
+    private static int SafeCount(Regex regex, string input)
+    {
+        try
+        {
+            return regex.Count(input);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return 0;
+        }
     }
 }

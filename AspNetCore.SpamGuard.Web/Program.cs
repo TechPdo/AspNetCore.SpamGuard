@@ -1,23 +1,30 @@
 using AspNetCore.SpamGuard;
 using AspNetCore.SpamGuard.Web.CustomSpamRules;
+using Microsoft.AspNetCore.HttpOverrides;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddSpamGuard(options =>
-{
-    builder.Configuration.GetSection("SpamGuard").Bind(options);
-}).AddSpamRule<ExcessiveCapsRule>();
+// Binds the "SpamGuard" section. Keep secrets (RecaptchaSecretKey) in user-secrets or environment variables.
+builder.Services
+    .AddSpamGuard(builder.Configuration.GetSection(SpamGuardOptions.SectionName))
+    .AddSpamRule<ExcessiveCapsRule>();
 
-// Add services to the container.
+// Behind a reverse proxy, SpamGuard needs the real client IP for rate limiting and StopForumSpam lookups.
+// Configure KnownProxies / KnownNetworks for your environment; by default only loopback proxies are trusted.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+});
+
 builder.Services.AddControllersWithViews();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+app.UseForwardedHeaders();
+
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Home/Error");
-    // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
     app.UseHsts();
 }
 
@@ -32,6 +39,5 @@ app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Home}/{action=Index}/{id?}")
     .WithStaticAssets();
-
 
 app.Run();
