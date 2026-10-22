@@ -19,6 +19,16 @@
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Copyright>$([System.DateTime]::Now.Year) © $(Authors)</Copyright>
+    <PackageReleaseNotes>
+2.0.0 (breaking changes; see "Upgrading from 1.x" in the README)
+- SpamDatabaseRule is now an opt-in StopForumSpam lookup (public IPs and MD5 email hashes only, cached, fail-open).
+- Scoring uses noisy-OR, so every triggered rule raises the score.
+- Configured lists replace the defaults instead of being appended to them.
+- Options are validated at startup; AddSpamGuard returns ISpamGuardBuilder.
+- Thread-safe rate limiting (IPv6 grouped per /64), ReDoS-safe and Unicode-aware random text detection, whole-word keywords.
+- New: signed form token, &lt;spam-guard-fields /&gt; tag helper, HttpContext context builders, DisabledRules and FailedRules.
+- Uses the shared ASP.NET Core framework instead of the deprecated Microsoft.AspNetCore.Http.Abstractions 2.x package.
+    </PackageReleaseNotes>
 
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
